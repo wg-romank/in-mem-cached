@@ -3,8 +3,9 @@ use std::hash::Hasher;
 use std::result::Result;
 use std::time::Duration;
 use std::time::Instant;
+use std::ops::Add;
 
-struct CacheConfig {
+pub struct CacheConfig {
     ttl: Duration,
     capacity: u64,
 }
@@ -17,7 +18,7 @@ struct CacheEntry {
 
 impl CacheEntry {
     fn is_expired(&self, now: Instant, ttl: Duration) -> bool {
-        now - self.created < ttl
+        self.created.add(ttl) < now
     }
 }
 
@@ -26,19 +27,19 @@ enum CacheSlot {
     Occupied(CacheEntry),
 }
 
-struct Cache<T: Time> {
+pub struct Cache<'a, T: Time> {
     cache_config: CacheConfig,
     storage: Vec<CacheSlot>,
-    time: T,
+    time: &'a T,
     num_occupied: u64,
 }
 
-trait Time {
+pub trait Time {
     fn get_time(&self) -> Instant;
 }
 
-impl<T: Time> Cache<T> {
-    pub fn new(cache_config: CacheConfig, time: T) -> Cache<T> {
+impl<'a, T: Time> Cache<'a, T> {
+    pub fn new(cache_config: CacheConfig, time: &'a T) -> Cache<'a, T> {
         let mut storage = Vec::with_capacity(cache_config.capacity as usize);
         for _ in 0..cache_config.capacity {
             storage.push(CacheSlot::Empty);
@@ -56,9 +57,7 @@ impl<T: Time> Cache<T> {
         hasher.write(key.as_bytes());
         let hashed = hasher.finish();
 
-        let mut idx = (hashed % self.cache_config.capacity) as usize;
-
-        idx
+        (hashed % self.cache_config.capacity) as usize
     }
 
     pub fn set(&mut self, key: String, value: String) -> Result<(), String> {
@@ -68,13 +67,17 @@ impl<T: Time> Cache<T> {
 
             while let CacheSlot::Occupied(item) = &self.storage[idx] {
                 if item.key == key || item.is_expired(created, self.cache_config.ttl) {
-                    break
+                    break;
                 } else {
-                    idx = idx + 1
+                    idx = (idx + 1) % self.cache_config.capacity as usize;
                 }
             }
 
-            let entry = CacheEntry { key, value, created };
+            let entry = CacheEntry {
+                key,
+                value,
+                created,
+            };
             self.storage[idx] = CacheSlot::Occupied(entry);
             // todo: bug below
             self.num_occupied += 1;
@@ -87,58 +90,93 @@ impl<T: Time> Cache<T> {
         }
     }
 
-    pub fn get(&self, key: String) -> Option<String> {
-        let idx = self.find_idx(&key);
+    pub fn get(&mut self, key: &String) -> Option<String> {
+        let mut idx = self.find_idx(&key);
         let now = self.time.get_time();
 
         let mut result = None;
 
         while let CacheSlot::Occupied(item) = &self.storage[idx] {
-            if item.key == key || !item.is_expired(now, self.cache_config.ttl) {
-                result = Some(item.value.clone());
+            if item.key == *key {
+                println!("{} == {}", &item.key, &key);
+                println!(
+                    "now {:#?} created {:#?} ttl {:#?}",
+                    now, item.created, self.cache_config.ttl
+                );
+                if !item.is_expired(now, self.cache_config.ttl) {
+                    result = Some(item.value.clone());
+                }
+                self.storage[idx] = CacheSlot::Empty;
                 break;
             }
-        };
+            idx = (idx + 1) % self.cache_config.capacity as usize;
+        }
 
         result
     }
 }
 
-struct TestTime {
-    now: Instant
-}
+#[cfg(test)]
+mod cache_tests {
+    use crate::cache::Cache;
+    use crate::cache::CacheConfig;
+    use crate::cache::Time;
 
-impl TestTime {
-    fn new(now: Instant) -> TestTime { TestTime { now } }
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+    use std::time::Instant;
+    use std::ops::Add;
 
-    fn add(&mut self, duration: Duration) {
-        match self.now.checked_add(duration) {
-            Some(new_now) => self.now = new_now,
-            None => panic!("failed to add {:#?}", duration)
+    struct TestTime {
+        now: Instant,
+        seconds_passed: AtomicUsize,
+    }
+
+    impl TestTime {
+        fn new(now: Instant) -> TestTime {
+            TestTime {
+                now,
+                seconds_passed: AtomicUsize::new(0),
+            }
+        }
+
+        fn add_secs(&self, duration: Duration) {
+            self.seconds_passed
+                .store(duration.as_secs() as usize, Ordering::SeqCst);
+        }
+    }
+
+    impl Time for TestTime {
+        fn get_time(&self) -> Instant {
+            self.now.add(Duration::from_secs(
+                self.seconds_passed.load(Ordering::SeqCst) as u64,
+            ))
+        }
+    }
+
+    #[test]
+    fn simple_operations() {
+        let time = TestTime::new(Instant::now());
+        let config = CacheConfig {
+            ttl: Duration::from_secs(10),
+            capacity: 2,
         };
-    }
-}
+        let mut cache = Cache::new(config, &time);
 
-impl Time for TestTime {
-    fn get_time(&self) -> Instant { self.now }
-}
+        let key = String::from("key: String");
+        let value = String::from("value: String");
 
-#[test]
-fn simple_operations() {
-    let mut time = TestTime::new(Instant::now());
-    let config = CacheConfig { ttl: Duration::from_millis(10), capacity: 2 };
-    let mut cache = Cache::new(config, time);
+        assert!(cache.set(key.clone(), value.clone()).is_ok());
 
-    let key = String::from("key: String");
-    let value = String::from("value: String");
+        match cache.get(&key) {
+            Some(v) => assert_eq!(v, value),
+            None => assert!(false),
+        }
 
-    assert!(cache.set(key.clone(), value.clone()).is_ok());
+        time.add_secs(Duration::from_secs(11));
 
-    match cache.get(key) {
-        Some(v) => assert_eq!(v, value),
-        None => assert!(false),
+        assert!(cache.get(&key).is_none());
     }
 
-    // todo: typeclasses
-    // time.add(Duration::from_millis(11));
 }
