@@ -1,17 +1,22 @@
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::Hasher;
+use std::ops::Add;
 use std::result::Result;
 use std::time::Duration;
 use std::time::Instant;
-use std::ops::Add;
+
+use rand::prelude::*;
+use rand::seq::SliceRandom;
 
 pub struct CacheConfig {
     ttl: Duration,
-    capacity: u64,
+    capacity: usize,
+    eviction_nuber: usize,
+    eviction_ratio: f32,
 }
 
 struct CacheEntry {
-    key: String,
     value: String,
     created: Instant,
 }
@@ -22,116 +27,93 @@ impl CacheEntry {
     }
 }
 
-enum CacheSlot {
-    Empty,
-    Occupied(CacheEntry),
+pub struct TtlCache<'a, T: Time> {
+    cache_config: CacheConfig,
+    cache: HashMap<String, CacheEntry>,
+    time: &'a T,
 }
 
-pub struct Cache<'a, T: Time> {
-    cache_config: CacheConfig,
-    storage: Vec<CacheSlot>,
-    time: &'a T,
-    num_occupied: u64,
+impl<'a, T: Time> TtlCache<'a, T> {
+    pub fn new(cache_config: CacheConfig, t: &'a T) -> TtlCache<'a, T> {
+        let capacity = cache_config.capacity;
+        TtlCache {
+            cache_config,
+            cache: HashMap::with_capacity(capacity),
+            time: &t,
+        }
+    }
+
+    pub fn set(&mut self, key: String, value: String) -> Result<(), String> {
+        let created = self.time.get_time();
+        self.cache
+            .insert(key.clone(), CacheEntry { value, created });
+
+        Ok(())
+    }
+
+    pub fn get(&mut self, key: &String) -> Option<String> {
+        let now = self.time.get_time();
+        let ttl = self.cache_config.ttl;
+
+        match self.cache.get(key) {
+            Some(e) => {
+                if !e.is_expired(now, ttl) {
+                    Some(e.value.clone())
+                } else {
+                    self.cache.remove(key);
+                    None
+                }
+            }
+            None => None,
+        }
+    }
+
+    pub fn evict_expired(&mut self) {
+        let now = self.time.get_time();
+        let ttl = self.cache_config.ttl;
+        let total_lookup = self.cache_config.eviction_nuber;
+
+        let mut removed: f32 = 0.;
+
+        while removed / (total_lookup as f32) >= self.cache_config.eviction_ratio {
+            let random_keys: Vec<String> = self
+                .cache
+                .keys()
+                .choose_multiple(&mut rand::thread_rng(), total_lookup)
+                .into_iter()
+                .cloned()
+                .collect();
+
+            for k in random_keys {
+                if self
+                    .cache
+                    .get(&k)
+                    .filter(|v| v.is_expired(now, ttl))
+                    .is_none()
+                {
+                    self.cache.remove(&k);
+                    removed += 1.;
+                }
+            }
+        }
+    }
 }
 
 pub trait Time {
     fn get_time(&self) -> Instant;
 }
 
-impl<'a, T: Time> Cache<'a, T> {
-    pub fn new(cache_config: CacheConfig, time: &'a T) -> Cache<'a, T> {
-        let mut storage = Vec::with_capacity(cache_config.capacity as usize);
-        for _ in 0..cache_config.capacity {
-            storage.push(CacheSlot::Empty);
-        }
-        Cache {
-            cache_config,
-            storage,
-            time,
-            num_occupied: 0,
-        }
-    }
-
-    fn find_idx(&self, key: &String) -> usize {
-        let mut hasher = DefaultHasher::new();
-        hasher.write(key.as_bytes());
-        let hashed = hasher.finish();
-
-        (hashed % self.cache_config.capacity) as usize
-    }
-
-    pub fn set(&mut self, key: String, value: String) -> Result<(), String> {
-        if self.num_occupied < self.cache_config.capacity {
-            let created = self.time.get_time();
-            let mut idx = self.find_idx(&key);
-
-            while let CacheSlot::Occupied(item) = &self.storage[idx] {
-                let overwrite = item.key == key;
-                let expired = item.is_expired(created, self.cache_config.ttl);
-                match (expired, overwrite) {
-                    (true, false) => self.storage[idx] = CacheSlot::Empty,
-                    (false, false) => break,
-                    (_, true) => break,
-                }
-                idx = (idx + 1) % self.cache_config.capacity as usize;
-            }
-
-            let entry = CacheEntry {
-                key,
-                value,
-                created,
-            };
-            self.storage[idx] = CacheSlot::Occupied(entry);
-            // todo: bug below
-            self.num_occupied += 1;
-            Ok(())
-        } else {
-            Err(format!(
-                "cache is out of capacity {}/{}",
-                self.num_occupied, self.cache_config.capacity
-            ))
-        }
-    }
-
-    pub fn get(&mut self, key: &String) -> Option<String> {
-        let mut idx = self.find_idx(&key);
-        let now = self.time.get_time();
-
-        let mut result = None;
-
-        while let CacheSlot::Occupied(item) = &self.storage[idx] {
-            let found = item.key == *key;
-            let expired = item.is_expired(now, self.cache_config.ttl);
-            match (expired, found) {
-                (true, f) => {
-                    self.storage[idx] = CacheSlot::Empty;
-                    if f { break };
-                }
-                (false, false) => (),
-                (false, true) => result = Some(item.value.clone()),
-            }
-            if item.key == *key {
-                self.storage[idx] = CacheSlot::Empty;
-                break;
-            }
-            idx = (idx + 1) % self.cache_config.capacity as usize;
-        }
-
-        result
-    }
-}
-
 #[cfg(test)]
 mod cache_tests {
-    use crate::cache::Cache;
     use crate::cache::CacheConfig;
     use crate::cache::Time;
+    use crate::cache::TtlCache;
 
+    use std::ops::Add;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use std::time::Duration;
     use std::time::Instant;
-    use std::ops::Add;
 
     struct TestTime {
         now: Instant,
@@ -161,13 +143,15 @@ mod cache_tests {
     }
 
     #[test]
-    fn simple_operations() {
+    fn ttl() {
         let time = TestTime::new(Instant::now());
         let config = CacheConfig {
             ttl: Duration::from_secs(10),
             capacity: 2,
+            eviction_nuber: 20,
+            eviction_ratio: 0.25,
         };
-        let mut cache = Cache::new(config, &time);
+        let mut cache = TtlCache::new(config, &time);
 
         let key = String::from("key: String");
         let value = String::from("value: String");
@@ -183,5 +167,4 @@ mod cache_tests {
 
         assert!(cache.get(&key).is_none());
     }
-
 }
