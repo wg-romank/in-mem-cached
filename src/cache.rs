@@ -66,11 +66,14 @@ impl<'a, T: Time> Cache<'a, T> {
             let mut idx = self.find_idx(&key);
 
             while let CacheSlot::Occupied(item) = &self.storage[idx] {
-                if item.key == key || item.is_expired(created, self.cache_config.ttl) {
-                    break;
-                } else {
-                    idx = (idx + 1) % self.cache_config.capacity as usize;
+                let overwrite = item.key == key;
+                let expired = item.is_expired(created, self.cache_config.ttl);
+                match (expired, overwrite) {
+                    (true, false) => self.storage[idx] = CacheSlot::Empty,
+                    (false, false) => break,
+                    (_, true) => break,
                 }
+                idx = (idx + 1) % self.cache_config.capacity as usize;
             }
 
             let entry = CacheEntry {
@@ -97,15 +100,17 @@ impl<'a, T: Time> Cache<'a, T> {
         let mut result = None;
 
         while let CacheSlot::Occupied(item) = &self.storage[idx] {
-            if item.key == *key {
-                println!("{} == {}", &item.key, &key);
-                println!(
-                    "now {:#?} created {:#?} ttl {:#?}",
-                    now, item.created, self.cache_config.ttl
-                );
-                if !item.is_expired(now, self.cache_config.ttl) {
-                    result = Some(item.value.clone());
+            let found = item.key == *key;
+            let expired = item.is_expired(now, self.cache_config.ttl);
+            match (expired, found) {
+                (true, f) => {
+                    self.storage[idx] = CacheSlot::Empty;
+                    if f { break };
                 }
+                (false, false) => (),
+                (false, true) => result = Some(item.value.clone()),
+            }
+            if item.key == *key {
                 self.storage[idx] = CacheSlot::Empty;
                 break;
             }
