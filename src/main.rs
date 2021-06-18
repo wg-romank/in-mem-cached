@@ -19,22 +19,34 @@ struct KeyValue {
     value: String,
 }
 
-async fn read(queue: mpsc::UnboundedSender<ServiceMessage>, key: String) -> Option<String> {
+type ServiceQueue = mpsc::UnboundedSender<ServiceMessage>;
+
+async fn read(queue: ServiceQueue, key: String) -> Result<impl warp::Reply, warp::Rejection> {
     let (tx, rx)= oneshot::channel::<Option<String>>();
 
-    queue.send(ServiceMessage::Read(key, tx)).ok()?;
+    queue.send(ServiceMessage::Read(key, tx))
+        .map_err(|_| warp::reject::reject())?;
 
-    rx.await.ok().flatten()
+    match rx.await.ok().flatten() {
+        Some(v) => Ok(v),
+        None => todo!(),
+    }
 }
 
-async fn write(queue: mpsc::UnboundedSender<ServiceMessage>, key: String, value: String) -> Result<(), String> {
-    let (tx, rx)= oneshot::channel::<Result<(), String>>();
+// async fn write(queue: ServiceQueue, key: String, value: String) -> Result<impl warp::Reply, warp::Rejection> {
+//     let (tx, rx)= oneshot::channel::<Result<(), String>>();
 
-    queue.send(ServiceMessage::Write(key, value, tx))
-        .map_err(|e| format!("{}", e))?;
+//     //todo:
 
-    unimplemented!()
-    // rx.await.map_err(|e| format!("{}", e)).flatten()
+//     // queue.send(ServiceMessage::Write(key, value, tx))
+//     //     .map_err(|e| Err(e))?;
+
+//     // rx.await.map_err(|e| format!("{}", e)).flatten()
+//     unimplemented!()
+// }
+
+fn with_cache_tx(tx: ServiceQueue) -> impl Filter<Extract = (ServiceQueue,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || tx.clone())
 }
 
 #[tokio::main]
@@ -50,29 +62,32 @@ async fn main() {
     let (tx, rx) = mpsc::unbounded_channel::<ServiceMessage>();
     let mut service = TtlCacheService::new(cache_config, rx);
 
-    service.run().await;
+    tokio::spawn(async move {
+        service.run().await
+    });
 
     let hello = warp::get()
         .and(warp::path("health-check"))
         .map(|| "Ok");
 
-    let set = warp::post()
-        .and(warp::path("set"))
-        .and(warp::body::json())
-        .and_then(|kv: KeyValue| {
-            write(tx.clone(), kv.key, kv.value)
-        });
+    // let set = warp::post()
+    //     .and(warp::path("set"))
+    //     .and(warp::body::json())
+    //     .and_then(|kv: KeyValue, tx: ServiceQueue| async move {
+    //         write(tx.clone(), kv.key, kv.value)
+    //     });
 
     let get = warp::get()
         .and(warp::path("get"))
         .and(warp::path::param::<String>())
-        .map(|key: String| {
-            todo!()
+        .and(with_cache_tx(tx.clone()))
+        .and_then(|key: String, tx: ServiceQueue|  async move {
+            read(tx.clone(), key).await
         });
 
-    let routes = hello.or(get).or(set);
+    let routes = hello.or(get);
 
-    warp::serve(hello)
+    warp::serve(routes)
         .run(([127, 0, 0, 1], 3030))
         .await;
 }
