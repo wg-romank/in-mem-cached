@@ -1,19 +1,16 @@
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::hash::Hasher;
 use std::ops::Add;
 use std::result::Result;
 use std::time::Duration;
 use std::time::Instant;
 
 use rand::prelude::*;
-use rand::seq::SliceRandom;
 
 pub struct CacheConfig {
-    ttl: Duration,
-    capacity: usize,
-    eviction_nuber: usize,
-    eviction_ratio: f32,
+    pub ttl: Duration,
+    pub capacity: usize,
+    pub eviction_nuber: usize,
+    pub eviction_ratio: f32,
 }
 
 struct CacheEntry {
