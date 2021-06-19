@@ -1,3 +1,5 @@
+use crate::time::Time;
+
 use std::collections::HashMap;
 use std::ops::Add;
 use std::result::Result;
@@ -96,51 +98,17 @@ impl<'a, T: Time> TtlCache<'a, T> {
     }
 }
 
-pub trait Time {
-    fn get_time(&self) -> Instant;
-}
-
 #[cfg(test)]
 mod cache_tests {
+    use std::time::Instant;
+    use std::time::Duration;
+
+    use crate::time::test_time::TestTime;
     use crate::cache::CacheConfig;
-    use crate::cache::Time;
     use crate::cache::TtlCache;
 
-    use std::ops::Add;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::atomic::Ordering;
-    use std::time::Duration;
-    use std::time::Instant;
-
-    struct TestTime {
-        now: Instant,
-        seconds_passed: AtomicUsize,
-    }
-
-    impl TestTime {
-        fn new(now: Instant) -> TestTime {
-            TestTime {
-                now,
-                seconds_passed: AtomicUsize::new(0),
-            }
-        }
-
-        fn add_secs(&self, duration: Duration) {
-            self.seconds_passed
-                .store(duration.as_secs() as usize, Ordering::SeqCst);
-        }
-    }
-
-    impl Time for TestTime {
-        fn get_time(&self) -> Instant {
-            self.now.add(Duration::from_secs(
-                self.seconds_passed.load(Ordering::SeqCst) as u64,
-            ))
-        }
-    }
-
     #[test]
-    fn ttl() {
+    fn items_expire() {
         let time = TestTime::new(Instant::now());
         let config = CacheConfig {
             ttl: Duration::from_secs(10),
