@@ -19,7 +19,7 @@ async fn main() {
         ttl: Duration::from_secs(30 * 60 * 60),
         // todo: unused
         capacity: 10000,
-        eviction_nuber: 20,
+        eviction_number: 20,
         eviction_ratio: 0.25,
     };
 
