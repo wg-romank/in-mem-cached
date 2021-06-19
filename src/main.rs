@@ -17,7 +17,6 @@ use api::api;
 async fn main() {
     let cache_config = CacheConfig {
         ttl: Duration::from_secs(30 * 60 * 60),
-        // todo: unused
         capacity: 10000,
         eviction_number: 20,
         eviction_ratio: 0.25,

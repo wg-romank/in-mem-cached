@@ -42,7 +42,7 @@ impl<'a, T: Time> TtlCache<'a, T> {
             // TODO:
             // we use hash-map here with default hasher
             // since we do not have specific requirements for keys
-            // but it is possible to tune performance by switching caching algorithm
+            // but it is possible to tune performance by switching hashing algorithm
             // for short/long keys, see docs https://doc.rust-lang.org/std/collections/struct.HashMap.html
             cache: HashMap::with_capacity(capacity),
             time: &t,
@@ -91,9 +91,8 @@ impl<'a, T: Time> TtlCache<'a, T> {
         let ttl = self.cache_config.ttl;
         let total_lookup = self.cache_config.eviction_number;
 
-        let mut removed: usize = 0;
-
-        while (removed as f32) / (total_lookup as f32) >= self.cache_config.eviction_ratio {
+        loop {
+            let mut removed: usize = 0;
             let random_keys: Vec<String> = self
                 .cache
                 .keys()
@@ -106,7 +105,7 @@ impl<'a, T: Time> TtlCache<'a, T> {
                 if self
                     .cache
                     .get(&k)
-                    .filter(|v| v.is_expired(now, ttl))
+                    .filter(|v| !v.is_expired(now, ttl))
                     .is_none()
                 {
                     self.cache.remove(&k);
@@ -114,6 +113,9 @@ impl<'a, T: Time> TtlCache<'a, T> {
                 }
             }
             self.keys_total -= removed;
+            if (removed as f32) / (total_lookup as f32) <= self.cache_config.eviction_ratio {
+                break
+            }
         }
     }
 }
@@ -169,6 +171,23 @@ mod cache_tests {
         time.add_secs(Duration::from_secs(11));
 
         assert!(cache.get(&key).is_none());
+        assert_eq!(cache.keys_total, 0);
+    }
+
+    #[test]
+    fn expired_keys_gets_evicted_with_eviction_call() {
+        let time = TestTime::new(Instant::now());
+        let mut cache = init_cache(&time);
+
+        let key = String::from("key: String");
+        let value = String::from("value: String");
+
+        assert!(cache.set(key.clone(), value.clone()).is_ok());
+        assert_eq!(cache.keys_total, 1);
+
+        time.add_secs(Duration::from_secs(11));
+
+        cache.evict_expired();
         assert_eq!(cache.keys_total, 0);
     }
 
