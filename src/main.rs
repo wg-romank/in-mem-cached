@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use warp::Filter;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use warp::Filter;
 
 mod cache;
 mod service;
@@ -10,8 +10,11 @@ mod service;
 use cache::CacheConfig;
 use service::ServiceMessage;
 use service::TtlCacheService;
+use service::REALTIME;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+
+use warp::http::status::StatusCode;
 
 #[derive(Serialize, Deserialize)]
 struct KeyValue {
@@ -21,31 +24,49 @@ struct KeyValue {
 
 type ServiceQueue = mpsc::UnboundedSender<ServiceMessage>;
 
-async fn read(queue: ServiceQueue, key: String) -> Result<impl warp::Reply, warp::Rejection> {
-    let (tx, rx)= oneshot::channel::<Option<String>>();
+async fn read(
+    queue: ServiceQueue,
+    key: String,
+) -> Result<impl warp::Reply, std::convert::Infallible> {
+    let (tx, rx) = oneshot::channel::<Option<String>>();
 
-    queue.send(ServiceMessage::Read(key, tx))
-        .map_err(|_| warp::reject::reject())?;
-
-    match rx.await.ok().flatten() {
-        Some(v) => Ok(v),
-        None => todo!(),
+    // todo: fix this mess
+    match queue.send(ServiceMessage::Read(key, tx)) {
+        Ok(_) => match rx.await {
+            Ok(v) => match v {
+                Some(vv) => Ok(warp::reply::with_status(vv, StatusCode::OK)),
+                None => Ok(warp::reply::with_status(
+                    String::from("Not found"),
+                    StatusCode::NOT_FOUND,
+                )),
+            },
+            Err(e) => Ok(warp::reply::with_status(
+                format!("{}", e),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            )),
+        },
+        Err(e) => Ok(warp::reply::with_status(
+            format!("{}", e),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        )),
     }
 }
 
-// async fn write(queue: ServiceQueue, key: String, value: String) -> Result<impl warp::Reply, warp::Rejection> {
-//     let (tx, rx)= oneshot::channel::<Result<(), String>>();
+async fn write(queue: ServiceQueue, key: String, value: String) -> Result<impl warp::Reply, std::convert::Infallible> {
+    let (tx, rx)= oneshot::channel::<Result<(), String>>();
 
-//     //todo:
+    match queue.send(ServiceMessage::Write(key, value, tx)) {
+        Ok(_) => match rx.await {
+            Ok(_) => Ok(warp::reply::with_status(String::new(), StatusCode::OK)),
+            Err(e) => Ok(warp::reply::with_status(format!("{}", e), StatusCode::INTERNAL_SERVER_ERROR))
+        },
+        Err(e) => Ok(warp::reply::with_status(format!("{}", e), StatusCode::INTERNAL_SERVER_ERROR))
+    }
+}
 
-//     // queue.send(ServiceMessage::Write(key, value, tx))
-//     //     .map_err(|e| Err(e))?;
-
-//     // rx.await.map_err(|e| format!("{}", e)).flatten()
-//     unimplemented!()
-// }
-
-fn with_cache_tx(tx: ServiceQueue) -> impl Filter<Extract = (ServiceQueue,), Error = std::convert::Infallible> + Clone {
+fn with_cache_tx(
+    tx: ServiceQueue,
+) -> impl Filter<Extract = (ServiceQueue,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || tx.clone())
 }
 
@@ -60,15 +81,11 @@ async fn main() {
     };
 
     let (tx, rx) = mpsc::unbounded_channel::<ServiceMessage>();
-    let mut service = TtlCacheService::new(cache_config, rx);
+    let mut service = TtlCacheService::new(cache_config, rx, &REALTIME);
 
-    tokio::spawn(async move {
-        service.run().await
-    });
+    tokio::spawn(async move { service.run().await });
 
-    let hello = warp::get()
-        .and(warp::path("health-check"))
-        .map(|| "Ok");
+    let hello = warp::get().and(warp::path("health-check")).map(|| "Ok");
 
     // let set = warp::post()
     //     .and(warp::path("set"))
@@ -81,13 +98,9 @@ async fn main() {
         .and(warp::path("get"))
         .and(warp::path::param::<String>())
         .and(with_cache_tx(tx.clone()))
-        .and_then(|key: String, tx: ServiceQueue|  async move {
-            read(tx.clone(), key).await
-        });
+        .and_then(|key: String, tx: ServiceQueue| async move { read(tx, key).await });
 
     let routes = hello.or(get);
 
-    warp::serve(routes)
-        .run(([127, 0, 0, 1], 3030))
-        .await;
+    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 }
