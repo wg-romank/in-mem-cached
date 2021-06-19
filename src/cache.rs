@@ -27,7 +27,7 @@ impl CacheEntry {
 }
 
 pub struct TtlCache<'a, T: Time> {
-    keys_total: usize,
+    pub keys_total: usize,
     cache_config: CacheConfig,
     cache: HashMap<String, CacheEntry>,
     time: &'a T,
@@ -147,6 +147,7 @@ mod cache_tests {
         let value = String::from("value: String");
 
         assert!(cache.set(key.clone(), value.clone()).is_ok());
+        assert_eq!(cache.keys_total, 1);
 
         match cache.get(&key) {
             Some(v) => assert_eq!(v, value),
@@ -163,10 +164,12 @@ mod cache_tests {
         let value = String::from("value: String");
 
         assert!(cache.set(key.clone(), value.clone()).is_ok());
+        assert_eq!(cache.keys_total, 1);
 
         time.add_secs(Duration::from_secs(11));
 
         assert!(cache.get(&key).is_none());
+        assert_eq!(cache.keys_total, 0);
     }
 
     #[test]
@@ -179,7 +182,9 @@ mod cache_tests {
         let value = String::from("value: String");
 
         assert!(cache.set(key.clone(), value.clone()).is_ok());
+        assert_eq!(cache.keys_total, 1);
         assert!(cache.set(key2.clone(), value.clone()).is_err());
+        assert_eq!(cache.keys_total, 1);
 
         match cache.get(&key) {
             Some(v) => assert_eq!(v, value),
@@ -197,7 +202,9 @@ mod cache_tests {
         let value2 = String::from("value2: String");
 
         assert!(cache.set(key.clone(), value.clone()).is_ok());
+        assert_eq!(cache.keys_total, 1);
         assert!(cache.set(key.clone(), value2.clone()).is_ok());
+        assert_eq!(cache.keys_total, 1);
 
         match cache.get(&key) {
             Some(v) => assert_eq!(v, value2),
