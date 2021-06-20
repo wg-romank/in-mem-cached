@@ -1,5 +1,5 @@
-use crate::time::Time;
 use crate::config::Config;
+use crate::time::Time;
 
 use std::collections::HashMap;
 use std::ops::Add;
@@ -34,17 +34,24 @@ impl<'a, T: Time> TtlCache<'a, T> {
             keys_total: 0,
             cache_config,
             // TODO:
-            // we use hash-map here with default hasher
-            // since we do not have specific requirements for keys
+            // we use hash-map here with default hasher since we do not have specific requirements for keys
             // but it is possible to tune performance by switching hashing algorithm
             // for short/long keys, see docs https://doc.rust-lang.org/std/collections/struct.HashMap.html
-            cache: HashMap::with_capacity(capacity),
+            cache: capacity
+                .map(|c| HashMap::with_capacity(c))
+                .unwrap_or(HashMap::new()),
             time: &t,
         }
     }
 
     pub fn set(&mut self, key: String, value: String) -> Result<(), String> {
-        if self.keys_total < self.cache_config.capacity || self.cache.contains_key(&key) {
+        if self
+            .cache_config
+            .capacity
+            .map(|c| self.keys_total < c)
+            .unwrap_or(true)
+            || self.cache.contains_key(&key)
+        {
             let created = self.time.get_time();
             let new_entry = CacheEntry { value, created };
             if !self.cache.contains_key(&key) {
@@ -56,7 +63,7 @@ impl<'a, T: Time> TtlCache<'a, T> {
 
             Ok(())
         } else {
-            Err(format!("out of capacity: {}", self.cache_config.capacity))
+            Err(format!("out of capacity: {:#?}", self.cache_config.capacity))
         }
     }
 
@@ -108,7 +115,7 @@ impl<'a, T: Time> TtlCache<'a, T> {
             }
             self.keys_total -= removed;
             if (removed as f32) / (total_lookup as f32) <= self.cache_config.eviction_ratio {
-                break
+                break;
             }
         }
     }
@@ -116,23 +123,15 @@ impl<'a, T: Time> TtlCache<'a, T> {
 
 #[cfg(test)]
 mod cache_tests {
-    use std::time::Instant;
     use std::time::Duration;
+    use std::time::Instant;
 
-    use crate::time::time_fixtures::TestTime;
-    use crate::config::Config;
     use crate::cache::TtlCache;
+    use crate::config::TEST_CONFIG_SINGLE_ITEM;
+    use crate::time::time_fixtures::TestTime;
 
     pub fn init_cache<'a>(time: &'a TestTime) -> TtlCache<'a, TestTime> {
-        let config = Config {
-            run_eviction_every: Duration::from_millis(250),
-            ttl: Duration::from_secs(10),
-            capacity: 1,
-            eviction_number: 20,
-            eviction_ratio: 0.25,
-        };
-
-        TtlCache::new(config, time)
+        TtlCache::new(TEST_CONFIG_SINGLE_ITEM, time)
     }
 
     #[test]
