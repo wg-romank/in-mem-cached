@@ -63,7 +63,7 @@ impl<'a, T: Time> TtlCache<'a, T> {
 
             Ok(())
         } else {
-            Err(format!("out of capacity: {:#?}", self.cache_config.capacity))
+            Err(format!("out of capacity: {:?}", self.cache_config.capacity))
         }
     }
 
