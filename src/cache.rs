@@ -1,4 +1,5 @@
 use crate::time::Time;
+use crate::config::Config;
 
 use std::collections::HashMap;
 use std::ops::Add;
@@ -7,13 +8,6 @@ use std::time::Duration;
 use std::time::Instant;
 
 use rand::prelude::*;
-
-pub struct CacheConfig {
-    pub ttl: Duration,
-    pub capacity: usize,
-    pub eviction_number: usize,
-    pub eviction_ratio: f32,
-}
 
 struct CacheEntry {
     value: String,
@@ -28,13 +22,13 @@ impl CacheEntry {
 
 pub struct TtlCache<'a, T: Time> {
     pub keys_total: usize,
-    cache_config: CacheConfig,
+    cache_config: Config,
     cache: HashMap<String, CacheEntry>,
     time: &'a T,
 }
 
 impl<'a, T: Time> TtlCache<'a, T> {
-    pub fn new(cache_config: CacheConfig, t: &'a T) -> TtlCache<'a, T> {
+    pub fn new(cache_config: Config, t: &'a T) -> TtlCache<'a, T> {
         let capacity = cache_config.capacity;
         TtlCache {
             keys_total: 0,
@@ -125,12 +119,13 @@ mod cache_tests {
     use std::time::Instant;
     use std::time::Duration;
 
-    use crate::time::test_time::TestTime;
-    use crate::cache::CacheConfig;
+    use crate::time::time_fixtures::TestTime;
+    use crate::config::Config;
     use crate::cache::TtlCache;
 
     pub fn init_cache<'a>(time: &'a TestTime) -> TtlCache<'a, TestTime> {
-        let config = CacheConfig {
+        let config = Config {
+            run_eviction_every: Duration::from_millis(250),
             ttl: Duration::from_secs(10),
             capacity: 1,
             eviction_number: 20,
