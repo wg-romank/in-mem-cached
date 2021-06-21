@@ -13,7 +13,8 @@ async fn read(
 ) -> Result<impl warp::Reply, std::convert::Infallible> {
     let (tx, rx) = oneshot::channel::<Option<String>>();
 
-    // todo: fix this mess
+    // todo: warp does not allow any types apart from Infallible and Rejection
+    // thus it is a big ugly instead of using much more ergonomic '?' op
     match queue.send(ServiceMessage::Read(key, tx)) {
         Ok(_) => match rx.await {
             Ok(v) => match v {
@@ -103,17 +104,16 @@ pub fn make_api(
 #[cfg(test)]
 mod api_tests {
     use crate::time::Time;
-    use std::time::Duration;
-    use std::time::Instant;
-
     use crate::api::make_api;
     use crate::config::TEST_CONFIG_SINGLE_ITEM;
     use crate::time::time_fixtures::TestTime;
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-
     use crate::service::ServiceMessage;
     use crate::service::TtlCacheService;
+
+    use std::time::Duration;
+    use std::time::Instant;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
 
     use tokio::sync::mpsc;
     use warp::Filter;
@@ -122,7 +122,7 @@ mod api_tests {
         fn get_time(&self) -> std::time::Instant {
             loop {
                 if let Ok(inner) = self.try_lock() {
-                    break inner.get_time();
+                    break inner.get_time()
                 }
             }
         }
@@ -138,8 +138,7 @@ mod api_tests {
 
         let time_for_svc = time.clone();
         tokio::spawn(async move {
-            let mut service = TtlCacheService::new(TEST_CONFIG_SINGLE_ITEM, rx, &time_for_svc);
-            service.run().await
+            TtlCacheService::new(TEST_CONFIG_SINGLE_ITEM, rx, &time_for_svc).run().await
         });
 
         (time, make_api(tx))

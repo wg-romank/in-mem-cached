@@ -1,10 +1,12 @@
-use std::time::Instant;
 use crate::config::Config;
 use crate::time::Time;
 use crate::cache::TtlCache;
 
+use std::time::Instant;
+
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tracing::instrument;
 
 pub enum ServiceMessage {
     Read(String, oneshot::Sender<Option<String>>),
@@ -36,22 +38,26 @@ impl<'a, T: Time> TtlCacheService<'a, T> {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn run(&mut self) {
         loop {
             if self.last_eviction_ran.elapsed() > self.config.eviction_every {
                 self.ttl_cache.evict_expired();
                 self.last_eviction_ran = self.time.get_time();
             }
-            // todo: timeout is still needed
+            // todo: future is blocked on the queue here
+            // so we won't be expiring stuff in case service is idling
             if let Some(msg) = self.queue.recv().await {
                 match msg {
-                    ServiceMessage::Read(key, sender) => {
+                    ServiceMessage::Read(key, cb) => {
                         let key = self.ttl_cache.get(&key);
-                        sender.send(key);
+                        let _ = cb.send(key)
+                            .map_err(|e| tracing::error!("[read] failed sending callback: {:?}", e));
                     }
-                    ServiceMessage::Write(key, value, sender) => {
+                    ServiceMessage::Write(key, value, cb) => {
                         let result = self.ttl_cache.set(key, value);
-                        sender.send(result);
+                        let _ = cb.send(result)
+                            .map_err(|e| tracing::error!("[write] failed sending callback: {:?}", e));
                     }
                 }
             } else {
