@@ -2,22 +2,25 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-mod cache;
-mod service;
 mod api;
-mod time;
+mod cache;
 mod config;
+mod service;
+mod time;
 
+use api::make_api;
 use config::Config;
 use service::ServiceMessage;
 use service::TtlCacheService;
 use time::REALTIME;
-use api::make_api;
 
 #[tokio::main]
 async fn main() {
+    let collector = tracing_subscriber::fmt().finish();
+    tracing::subscriber::set_global_default(collector).expect("failed to subscribe tracer");
+
     let cache_config = Config {
-        ttl: Duration::from_secs(30 * 60),  // 30 minutes
+        ttl: Duration::from_secs(30 * 60), // 30 minutes
         capacity: None,
         eviction_number: 20,
         eviction_ratio: 0.25,

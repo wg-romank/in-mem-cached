@@ -47,17 +47,20 @@ impl<'a, T: Time> TtlCacheService<'a, T> {
             }
             // todo: future is blocked on the queue here
             // so we won't be expiring stuff in case service is idling
+            // this can be worked around by adding a timeout on future await
             if let Some(msg) = self.queue.recv().await {
                 match msg {
                     ServiceMessage::Read(key, cb) => {
-                        let key = self.ttl_cache.get(&key);
-                        let _ = cb.send(key)
-                            .map_err(|e| tracing::error!("[read] failed sending callback: {:?}", e));
+                        let value = self.ttl_cache.get(&key);
+                        tracing::info!("[read] key {} -> {:?}", &key, &value);
+                        cb.send(value)
+                            .unwrap_or_else(|e| tracing::error!("[read] failed sending callback: {:?}", e));
                     }
                     ServiceMessage::Write(key, value, cb) => {
+                        tracing::info!("[write] key {} value {:?}", &key, &value);
                         let result = self.ttl_cache.set(key, value);
-                        let _ = cb.send(result)
-                            .map_err(|e| tracing::error!("[write] failed sending callback: {:?}", e));
+                        cb.send(result)
+                            .unwrap_or_else(|e| tracing::error!("[write] failed sending callback: {:?}", e));
                     }
                 }
             } else {
