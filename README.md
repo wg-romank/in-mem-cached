@@ -25,4 +25,16 @@ cargo test
 
 ## loadtest
 
-<TBD>
+Loadtest is using `dril` tool, you can get it using cargo
+
+```bash
+cargo install drill
+```
+
+To run loadtest
+
+```bash
+drill --benchmark loadtest.yml --stats
+```
+
+Of course this is by no means conclusive indication of performance, just another sanity check for the service.

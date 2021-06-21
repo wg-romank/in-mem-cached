@@ -1,0 +1,28 @@
+concurrency: 4
+base: 'http://localhost:8080'
+iterations: 5
+rampup: 2
+
+plan:
+  - name: Wait for health-check
+    request:
+      url: /health-check
+
+  - name: Set some values
+    request: 
+      url: /set/{{ item }}
+      method: POST
+      body: '{{ item }}'
+    with_items_range:
+      start: 1003940
+      step: 400
+      stop: 2003945
+
+  - name: Get some values
+    request: 
+      url: /get/{{ item }}
+    with_items_range:
+      start: 1003940
+      step: 400
+      stop: 2003945
+    
