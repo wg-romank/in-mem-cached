@@ -88,7 +88,7 @@ pub fn make_api(
         .and_then(
             |key: String, value: warp::hyper::body::Bytes, tx: ServiceQueue| async move {
                 write(tx.clone(), key, value).await
-            }
+            },
         );
 
     let get = warp::get()
@@ -102,32 +102,47 @@ pub fn make_api(
 
 #[cfg(test)]
 mod api_tests {
+    use crate::time::Time;
+    use std::time::Duration;
     use std::time::Instant;
 
     use crate::api::make_api;
     use crate::config::TEST_CONFIG_SINGLE_ITEM;
     use crate::time::time_fixtures::TestTime;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
 
     use crate::service::ServiceMessage;
     use crate::service::TtlCacheService;
 
-    use warp::Filter;
-    use lazy_static::lazy_static;
     use tokio::sync::mpsc;
+    use warp::Filter;
 
-    // tokio should allow not only static lifetimes, really
-    // todo: find a better way
-    lazy_static! {
-        static ref TIME: TestTime = TestTime::new(Instant::now());
+    impl Time for Arc<Mutex<TestTime>> {
+        fn get_time(&self) -> std::time::Instant {
+            loop {
+                if let Ok(inner) = self.try_lock() {
+                    break inner.get_time();
+                }
+            }
+        }
     }
 
-    fn init() -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    fn init() -> (
+        Arc<Mutex<TestTime>>,
+        impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone,
+    ) {
         let (tx, rx) = mpsc::unbounded_channel::<ServiceMessage>();
 
-        let mut service = TtlCacheService::new(TEST_CONFIG_SINGLE_ITEM, rx, &*TIME);
-        tokio::spawn(async move { service.run().await });
+        let time = Arc::new(Mutex::new(TestTime::new(Instant::now())));
 
-        make_api(tx)
+        let time_for_svc = time.clone();
+        tokio::spawn(async move {
+            let mut service = TtlCacheService::new(TEST_CONFIG_SINGLE_ITEM, rx, &time_for_svc);
+            service.run().await
+        });
+
+        (time, make_api(tx))
     }
 
     fn api_set_request(key: &str, value: &str) -> warp::test::RequestBuilder {
@@ -145,7 +160,7 @@ mod api_tests {
 
     #[tokio::test]
     async fn non_existent_keys_return_not_found() {
-        let api = init();
+        let (_, api) = init();
 
         let get_res = api_get_request("abcda").reply(&api).await;
 
@@ -154,7 +169,7 @@ mod api_tests {
 
     #[tokio::test]
     async fn able_to_set_value() {
-        let api = init();
+        let (_, api) = init();
 
         let set_res = api_set_request("abcda", "bcda").reply(&api).await;
 
@@ -163,7 +178,7 @@ mod api_tests {
 
     #[tokio::test]
     async fn able_to_get_back_set_values() {
-        let api = init();
+        let (_, api) = init();
 
         let set_res = api_set_request("abcda", "bcda").reply(&api).await;
 
@@ -177,7 +192,7 @@ mod api_tests {
 
     #[tokio::test]
     async fn set_values_have_capacity() {
-        let api = init();
+        let (_, api) = init();
 
         let set_res = api_set_request("abcda", "bcda").reply(&api).await;
         assert_eq!(set_res.status(), 200);
@@ -187,6 +202,19 @@ mod api_tests {
 
     #[tokio::test]
     async fn set_values_expire() {
-        unimplemented!();
+        let (time, api) = init();
+
+        let set_res = api_set_request("abcda", "bcda").reply(&api).await;
+        assert_eq!(set_res.status(), 200);
+
+        // not pretty, but we have to make sure value is dropped so
+        // the lock is released and we can get time again
+        tokio::spawn(async move {
+            let lock = time.lock().await;
+            lock.add_secs(Duration::from_secs(11));
+        });
+
+        let get_res = api_get_request("abcda").reply(&api).await;
+        assert_eq!(get_res.status(), 404);
     }
 }
