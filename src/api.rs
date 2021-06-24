@@ -43,7 +43,7 @@ async fn write(
 ) -> Result<impl warp::Reply, std::convert::Infallible> {
     let (tx, rx) = oneshot::channel::<Result<(), String>>();
 
-    match String::from_utf8(Vec::from_iter(value.into_iter())) {
+    match String::from_utf8(value.into_iter().collect::<Vec<_>>()) {
         Ok(v) => match queue.send(ServiceMessage::Write(key, v, tx)) {
             Ok(_) => match rx.await {
                 Ok(res) => match res {
@@ -74,8 +74,6 @@ fn with_cache_tx(
     warp::any().map(move || tx.clone())
 }
 
-use std::iter::FromIterator;
-
 pub fn make_api(
     tx: mpsc::UnboundedSender<ServiceMessage>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -95,7 +93,7 @@ pub fn make_api(
     let get = warp::get()
         .and(warp::path("get"))
         .and(warp::path::param::<String>())
-        .and(with_cache_tx(tx.clone()))
+        .and(with_cache_tx(tx))
         .and_then(|key: String, tx: ServiceQueue| async move { read(tx, key).await });
 
     hello.or(get).or(set)

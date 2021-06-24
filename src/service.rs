@@ -31,10 +31,10 @@ impl<'a, T: Time> TtlCacheService<'a, T> {
     ) -> TtlCacheService<'a, T> {
         TtlCacheService {
             config: cache_config.clone(),
-            queue: queue,
+            queue,
             ttl_cache: TtlCache::new(cache_config, time),
             last_eviction_ran: time.get_time(),
-            time: time,
+            time,
         }
     }
 

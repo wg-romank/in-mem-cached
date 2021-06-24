@@ -38,8 +38,8 @@ impl<'a, T: Time> TtlCache<'a, T> {
             // but it is possible to tune performance by switching hashing algorithm
             // for short/long keys, see docs https://doc.rust-lang.org/std/collections/struct.HashMap.html
             cache: capacity
-                .map(|c| HashMap::with_capacity(c))
-                .unwrap_or(HashMap::new()),
+                .map(HashMap::with_capacity)
+                .unwrap_or_else(HashMap::new),
             time: &t,
         }
     }
@@ -55,7 +55,7 @@ impl<'a, T: Time> TtlCache<'a, T> {
             let created = self.time.get_time();
             let new_entry = CacheEntry { value, created };
             if !self.cache.contains_key(&key) {
-                self.cache.insert(key.clone(), new_entry);
+                self.cache.insert(key, new_entry);
                 self.keys_total += 1;
             } else {
                 self.cache.entry(key).and_modify(|v| *v = new_entry);
@@ -67,7 +67,7 @@ impl<'a, T: Time> TtlCache<'a, T> {
         }
     }
 
-    pub fn get(&mut self, key: &String) -> Option<String> {
+    pub fn get(&mut self, key: &str) -> Option<String> {
         let now = self.time.get_time();
         let ttl = self.cache_config.ttl;
 
