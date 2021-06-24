@@ -1,6 +1,6 @@
+use crate::cache::TtlCache;
 use crate::config::Config;
 use crate::time::Time;
-use crate::cache::TtlCache;
 
 use std::time::Instant;
 
@@ -53,18 +53,20 @@ impl<'a, T: Time> TtlCacheService<'a, T> {
                     ServiceMessage::Read(key, cb) => {
                         let value = self.ttl_cache.get(&key);
                         tracing::info!("[read] key {} -> {:?}", &key, &value);
-                        cb.send(value)
-                            .unwrap_or_else(|e| tracing::error!("[read] failed sending callback: {:?}", e));
+                        cb.send(value).unwrap_or_else(|e| {
+                            tracing::error!("[read] failed sending callback: {:?}", e)
+                        });
                     }
                     ServiceMessage::Write(key, value, cb) => {
                         tracing::info!("[write] key {} value {:?}", &key, &value);
                         let result = self.ttl_cache.set(key, value);
-                        cb.send(result)
-                            .unwrap_or_else(|e| tracing::error!("[write] failed sending callback: {:?}", e));
+                        cb.send(result).unwrap_or_else(|e| {
+                            tracing::error!("[write] failed sending callback: {:?}", e)
+                        });
                     }
                 }
             } else {
-                break
+                break;
             }
         }
     }

@@ -101,16 +101,16 @@ pub fn make_api(
 
 #[cfg(test)]
 mod api_tests {
-    use crate::time::Time;
     use crate::api::make_api;
     use crate::config::TEST_CONFIG_SINGLE_ITEM;
-    use crate::time::time_fixtures::TestTime;
     use crate::service::ServiceMessage;
     use crate::service::TtlCacheService;
+    use crate::time::time_fixtures::TestTime;
+    use crate::time::Time;
 
+    use std::sync::Arc;
     use std::time::Duration;
     use std::time::Instant;
-    use std::sync::Arc;
     use tokio::sync::Mutex;
 
     use tokio::sync::mpsc;
@@ -120,7 +120,7 @@ mod api_tests {
         fn get_time(&self) -> std::time::Instant {
             loop {
                 if let Ok(inner) = self.try_lock() {
-                    break inner.get_time()
+                    break inner.get_time();
                 }
             }
         }
@@ -136,7 +136,9 @@ mod api_tests {
 
         let time_for_svc = time.clone();
         tokio::spawn(async move {
-            TtlCacheService::new(TEST_CONFIG_SINGLE_ITEM, rx, &time_for_svc).run().await
+            TtlCacheService::new(TEST_CONFIG_SINGLE_ITEM, rx, &time_for_svc)
+                .run()
+                .await
         });
 
         (time, make_api(tx))
