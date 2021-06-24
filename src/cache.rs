@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::time::Time;
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::ops::Add;
 use std::result::Result;
@@ -54,12 +55,13 @@ impl<'a, T: Time> TtlCache<'a, T> {
         {
             let created = self.time.get_time();
             let new_entry = CacheEntry { value, created };
-            if !self.cache.contains_key(&key) {
-                self.cache.insert(key, new_entry);
-                self.keys_total += 1;
-            } else {
-                self.cache.entry(key).and_modify(|v| *v = new_entry);
-            }
+            match self.cache.entry(key) {
+                Entry::Occupied(mut e) => *e.get_mut() = new_entry,
+                Entry::Vacant(e) => {
+                    self.keys_total += 1;
+                    e.insert(new_entry);
+                }
+            };
 
             Ok(())
         } else {
